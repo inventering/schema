@@ -1,0 +1,1165 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schemakontroll</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+  // Apply the saved theme before the page is drawn, so it doesn't flash dark first.
+  try { if (localStorage.getItem('schemakontroll.theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch {}
+</script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14171d; --panel: #1d2129; --text: #e6e9ef; --muted: #9aa3b2; --border: #323844;
+    --accent: #7ea2ff; --accent-soft: #24304d;
+    --err: #ff8a80; --err-soft: #3d1f1f; --warn: #ffc069; --warn-soft: #3a2d17;
+    --ok: #81c784; --ok-soft: #1e3322;
+  }
+  /* Light mode, chosen with the toggle in the header (dark is the default). */
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f6f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --border: #d8dde5;
+    --accent: #2f5fd0; --accent-soft: #e6edfc;
+    --err: #c62828; --err-soft: #fdecea; --warn: #a76100; --warn-soft: #fff3df;
+    --ok: #2e7d32; --ok-soft: #e7f4e8;
+  }
+  * { box-sizing: border-box; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 24px 64px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  /* Period and Schema side by side */
+  .setup { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; align-items: stretch; }
+  .setup .panel { margin-bottom: 0; }
+  /* Results: heading with tabs, and a filter bar that stays visible while scrolling */
+  .reshead { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  .reshead h2 { margin: 0; }
+  .reshead .tabs { margin: 0; }
+  .filters { position: sticky; top: 0; z-index: 5; background: var(--panel); padding: 10px 0 2px;
+    border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tabs button { border: 1px solid var(--border); background: transparent; color: var(--text);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+  .tabs button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--text); }
+  .range-info { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .range-info b { color: var(--text); }
+  #drop { border: 2px dashed var(--border); border-radius: 10px; padding: 20px 16px; text-align: center;
+    cursor: pointer; color: var(--muted); }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop b { color: var(--text); }
+  #fileinfo { margin-top: 10px; font-size: 14px; }
+  .notice { padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+  .notice.warn { background: var(--warn-soft); color: var(--warn); }
+  .notice.ok { background: var(--ok-soft); color: var(--ok); }
+  .summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .chip { border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 13px;
+    background: transparent; color: var(--text); cursor: pointer; font-family: inherit; }
+  .chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .chip .n { font-weight: 700; margin-left: 4px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--border); }
+  .region > h3.rhead { font-size: 17px; margin: 22px 0 0; }
+  .toolbar { display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .btn { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer; font: inherit; font-size: 13px; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.small { padding: 2px 8px; font-size: 12px; }
+  a.btn { display: inline-block; text-decoration: none; }
+  .item.approved { opacity: .5; }
+  .item .acts { grid-column: 3; grid-row: 1 / span 2; align-self: center; display: flex; gap: 6px; }
+  .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; padding: 0; }
+  .week { margin-top: 18px; }
+  .week > h3 { font-size: 15px; margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .day h4 { font-size: 13px; text-transform: capitalize; color: var(--muted); margin: 12px 0 6px; }
+  .item { display: grid; grid-template-columns: 76px 1fr auto; gap: 2px 12px; padding: 7px 10px;
+    border-radius: 8px; border: 1px solid var(--border); margin-bottom: 6px; background: var(--panel); }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; align-self: start; white-space: nowrap; text-align: center; }
+  .badge.err { background: var(--err-soft); color: var(--err); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .tablewrap { overflow-x: auto; }
+  table.stats { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.stats th, table.stats td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  table.stats th:first-child, table.stats td:first-child { text-align: left; }
+  table.stats th { cursor: pointer; user-select: none; color: var(--muted); font-weight: 600; }
+  table.stats th.sorted { color: var(--accent); }
+  table.stats tr.avg td { font-weight: 700; border-top: 2px solid var(--border); }
+  .bar { display: inline-block; height: 8px; border-radius: 4px; background: var(--accent); vertical-align: middle; margin-left: 8px; opacity: .7; }
+  td.hi { color: var(--warn); font-weight: 700; }
+  td.lo { color: var(--accent); font-weight: 700; }
+  td.zero { color: var(--muted); opacity: .5; }
+  td.heat { border-radius: 4px; }
+  table.stats tr.grp th { cursor: default; text-align: center; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; border-bottom: none; padding-bottom: 0; }
+  table.stats tr.grp th:not(:first-child) { border-left: 1px solid var(--border); }
+  .msg { min-width: 0; overflow-wrap: anywhere; }
+  .loc { grid-column: 2; font-size: 12px; color: var(--muted); }
+  .cat { font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); padding: 12px 0; }
+  details { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  details li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <h1>Schemakontroll</h1>
+    <button class="btn" id="themeBtn" type="button"></button>
+  </div>
+  <p class="sub">Välj period, ladda upp schemat (.xlsx) och få varningar om sådant som behöver rättas.</p>
+
+  <div class="setup">
+  <section class="panel">
+    <h2>1. Period</h2>
+    <div class="tabs" id="modeTabs">
+      <button data-mode="weeks" class="active">Veckor</button>
+      <button data-mode="month">Månad</button>
+      <button data-mode="range">Datumintervall</button>
+    </div>
+    <div class="row" data-panel="weeks">
+      <label>Från och med vecka som innehåller
+        <input type="date" id="wStart">
+      </label>
+      <label>Antal veckor
+        <select id="wCount"></select>
+      </label>
+    </div>
+    <div class="row" data-panel="month" hidden>
+      <label>Månad
+        <input type="month" id="mMonth">
+      </label>
+    </div>
+    <div class="row" data-panel="range" hidden>
+      <label>Från
+        <input type="date" id="rFrom">
+      </label>
+      <label>Till
+        <input type="date" id="rTo">
+      </label>
+    </div>
+    <div class="range-info" id="rangeInfo"></div>
+  </section>
+
+  <section class="panel">
+    <h2>2. Schema</h2>
+    <div id="drop">
+      <b>Släpp Excel-filen här</b> eller klicka för att välja fil
+      <input type="file" id="file" accept=".xlsx,.xlsm,.xls" hidden>
+    </div>
+    <div id="fileinfo"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="recheckBtn" hidden>Kontrollera igen</button>
+      <span class="cat" id="recheckInfo"></span>
+    </div>
+  </section>
+  </div>
+
+  <section class="panel" id="results" hidden>
+    <div class="reshead">
+      <h2>3. Resultat</h2>
+      <div class="tabs" id="resTabs">
+        <button data-pane="warnPane" class="active">Varningar <span id="warnCount"></span></button>
+        <button data-pane="statsPanel">Personalstatistik</button>
+      </div>
+    </div>
+    <div id="resultNotice"></div>
+    <div id="warnPane">
+      <div class="filters">
+        <div class="cat" style="margin-bottom:6px">Regioner (klicka på flera för att visa dem samtidigt):</div>
+        <div class="summary" id="regions"></div>
+        <div class="summary" id="summary"></div>
+        <div class="toolbar">
+          <span class="cat" id="countLine"></span>
+          <label style="flex-direction:row;align-items:center;gap:6px">Gruppera efter
+            <select id="groupBy"><option value="date">Datum</option><option value="region">Region</option></select>
+          </label>
+          <button class="linkbtn" id="showApproved" hidden></button>
+        </div>
+      </div>
+      <div id="list"></div>
+    </div>
+
+  <div id="statsPanel" hidden>
+    <div class="tabs" id="statTabs">
+      <button data-view="work" class="active">Arbete</button>
+      <button data-view="absence">Frånvaro</button>
+    </div>
+    <div class="row" id="absControls" hidden style="margin-bottom:10px">
+      <label>Visa
+        <select id="absMode">
+          <option value="year">Helår per månad</option>
+          <option value="period">Vald period</option>
+        </select>
+      </label>
+      <label data-year>År <select id="absYear"></select></label>
+      <label data-year>Frånvarotyp
+        <select id="absType">
+          <option value="all">All frånvaro</option>
+          <option value="se">Semester (SE/SEM)</option>
+          <option value="sj">Sjuk (SJ)</option>
+          <option value="vab">VAB</option>
+          <option value="tj">Tjänstledig (TJ/TL/TJL)</option>
+          <option value="fl">Föräldraledig (FL)</option>
+          <option value="l">Ledig (L)</option>
+        </select>
+      </label>
+    </div>
+    <div id="basicStats">
+      <p class="cat" style="margin-top:0"><span id="periodHint">För vald period.</span> Klicka på en kolumnrubrik för att sortera. <span style="color:var(--warn);font-weight:700">Orange</span> = minst 30 % över snittet<span id="loHint">, <span style="color:var(--accent);font-weight:700">blå</span> = minst 30 % under</span>.</p>
+      <label style="flex-direction:row;align-items:center;gap:6px;margin-bottom:8px"><input type="checkbox" id="hideZero" checked> Dölj personal som bara har nollor i tabellen</label>
+      <div class="tablewrap"><table class="stats" id="statsTable"></table></div>
+      <div class="cat" id="statsUnknown" style="margin-top:8px"></div>
+    </div>
+  </div>
+  </section>
+
+  <details>
+    <summary>Vilka kontroller görs?</summary>
+    <ul>
+      <li><b>Inventeringsledare:</b> en schemalagd butik (butiksnr + butiksnamn) som inte är INSTÄLLD/FLYTTAD måste ha en inventeringsledare.</li>
+      <li><b>Personal:</b> varje person måste ha exakt en ifylld cell per dag med giltiga koder (X, MÄ, MÖ, T, L, TJ/TL/TJL, SE/SEM, SJ, KO, AL, R, B, BL, FL, VAB, KU). "X/R" eller "MÄ + X" i samma cell räknas som en markering. Två ifyllda celler samma dag ger en dubbelbokning (X på en butik + MÄ på en annan ger bara en varning). Kolumner som heter "Vakant" hoppas över, liksom helgdagar.</li>
+      <li><b>Märkning:</b> butiken måste ha t.ex. "AB 4/6" eller "AB CD 26/6" i MÄRKNING. Den dagen ska det finnas en rad som nämner butiken (stavningsvarianter godtas) där någon har MÄ, och initialerna ska tillhöra någon med MÄ där (både vanliga initialer som "AB" och förkortningar som "AnBe"). Står det "Teams" i märkningen krävs bara datum och initialer, ingen MÄ-rad.</li>
+      <li><b>Mejlat:</b> varje schemalagd butik som inte är inställd/flyttad måste ha något ifyllt i MEJLAT.</li>
+      <li><b>Region:</b> läses från butikens bakgrundsfärg i schemat – grön = Östra, ljusblå = Mitt, gul = LÅGPRIS, mörkare blå = Syd/Väst/CHAB. Varningar om personal som saknar markering hamnar under "Utan region".</li>
+      <li><b>Personalstatistik:</b> räknar per person antal X på butiker, antal gånger som inventeringsledare (INV LED, förnamn och kända smeknamn kopplas till rätt person; vid två med samma förnamn avgör vem som har X på butiken) och antal MÄ. Inställda/flyttade butiker räknas inte som ledarskap. Dessutom antal dagar med kontor/möten (KO, MÖ, AL) och frånvaro (SE/SEM, SJ, VAB, TJ/TL/TJL, FL, L). Semester (SE/SEM) i juli räknas inte eftersom kontoret är stängt.</li>
+      <li><b>Flyttad butik:</b> står det t.ex. "Flyttad till 4/11" i butiksnamnet ska butiken vara schemalagd (ej inställd) den 4/11. Butiken känns igen på butiksnr eller namn. Står det Flyttad/Flyttas utan datum blir det fel; "Flyttad till januari" eller "till 2027" ger en varning tills datumet är bestämt.</li>
+      <li><b>PWC exportfil:</b> när inventeringsdagen har passerat ska PWC EXPORTFIL INLAGT vara ifyllt (gäller ej inställda/flyttade butiker).</li>
+      <li><b>Godkänn:</b> en varning som är avsiktlig kan godkännas. Den visas då nedtonad med märket GODKÄND och räknas inte bland fel/varningar; knappen "Dölj godkända" döljer dem. Ändras innehållet (t.ex. siffran i INVENTERARE BEHOV) visas den igen. Godkännanden sparas i den här webbläsaren.</li>
+      <li><b>Inventerarbehov:</b> antalet X på en butik ska vara lika med siffran i INVENTERARE BEHOV (X i en kombinerad cell som "X/R" räknas).</li>
+      <li><b>Mini-butiker:</b> butiker vars namn börjar med "Mini" ska varken mejlas eller märkas – de kontrolleras inte för MEJLAT/MÄRKNING, och det blir en varning om något ändå är ifyllt.</li>
+      <li><b>Frånvaro:</b> den som har SJ (sjuk), TJ/TL/TJL (tjänstledig), SE/SEM (semester), VAB, FL (föräldraledig) eller L (ledig) en dag får inte vara bokad på något annat samma dag – varken i en annan rad eller i samma cell (t.ex. "X/SJ").</li>
+      <li><b>Inställd/flyttad:</b> en butik med Inställd, Flyttad/Flyttas, Fylltad eller Stängd i namnet får inte ha något X.</li>
+      <li><b>Övrigt:</b> X på en rad utan butik, MÄ utan butiksnamn, butik utan bokad personal, okända koder och saknat butiksnr/butiksnamn.</li>
+    </ul>
+  </details>
+</main>
+
+<script id="checker">
+// ---- Pure checking logic (no DOM) ----
+const Checker = (() => {
+  const DEFAULT_CODES = ['X', 'MÄ', 'MÖ', 'T', 'L', 'TJL', 'SEM', 'SE', 'SJ', 'TJ', 'TL', 'KO', 'AL', 'R', 'B', 'BL', 'FL', 'VAB', 'KU'];
+  // Out-of-office codes: nobody with one of these may be booked on anything else that day.
+  const ABSENCE = { SJ: 'sjuk', TJL: 'tjänstledig', TJ: 'tjänstledig', TL: 'tjänstledig', SE: 'semester', SEM: 'semester', VAB: 'vård av sjukt barn', FL: 'föräldraledig', L: 'ledig' };
+  // Moved/cancelled: "INSTÄLLD", "Flyttad till 2/9", "flytad 27/10", "FYLLTAD", "Stängd pga brand".
+  const CANCEL_RE = /(inställ|flyt+a[ds]|fyll?tad|stängd)/i;
+  // Words that say nothing about which store it is.
+  const STOP = new Set(['ftg', 'sc', 'xtra', 'tra', 'coop', 'city', 'i', 'ur', 'kontrakt', 'gg', 'till', 'och',
+    'flyttad', 'flytad', 'inställd', 'inställt', 'fylltad', 'baklager', 'bl', 'märk', 'först', 'start']);
+
+  const str = v => (v === null || v === undefined) ? '' : String(v).trim();
+  const up = v => str(v).toUpperCase();
+  const pad = n => String(n).padStart(2, '0');
+
+  // Dates are handled as 'YYYY-MM-DD' strings to avoid timezone surprises.
+  function serialToISO(n) {
+    const d = new Date(Math.round((n - 25569) * 86400000));
+    return d.toISOString().slice(0, 10);
+  }
+  function cellToISO(v) {
+    if (typeof v === 'number' && v > 20000 && v < 80000) return serialToISO(v);
+    if (v instanceof Date) return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+    const m = str(v).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+    return null;
+  }
+  function isoToUTC(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); }
+  function utcToISO(d) { return d.toISOString().slice(0, 10); }
+  function addDays(iso, n) { const d = isoToUTC(iso); d.setUTCDate(d.getUTCDate() + n); return utcToISO(d); }
+  function mondayOf(iso) { const d = isoToUTC(iso); const wd = (d.getUTCDay() + 6) % 7; return addDays(iso, -wd); }
+  function isoWeek(iso) {
+    const d = isoToUTC(iso);
+    const day = (d.getUTCDay() + 6) % 7;
+    d.setUTCDate(d.getUTCDate() - day + 3);
+    const firstThu = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+    return { week: 1 + Math.round(((d - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7), year: d.getUTCFullYear() };
+  }
+  function validDate(y, m, d) {
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  }
+
+  // Significant words of a store name: "SC Eskilstuna 06:00" -> ["eskilstuna"].
+  function storeWords(s, minLen = 3) {
+    return str(s).toLowerCase()
+      .replace(/(flyt+a[ds]|fyll?tad|inställ|stängd).*$/, ' ')   // drop "Flyttad till 2/9" and what follows
+      .replace(/\d+[:.]\d+/g, ' ')
+      .split(/[^a-zåäöéü0-9]+/)
+      .filter(w => w.length >= minLen && !STOP.has(w) && !/^\d/.test(w));
+  }
+  function lev(a, b) {
+    const d = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      let prev = d[0]; d[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const t = d[j];
+        d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+        prev = t;
+      }
+    }
+    return d[b.length];
+  }
+  // "traneberg" ~ "tranebergsvägen", "trozzeli" ~ "trozelligatan", "grindsvägen" ~ "grindvägen".
+  function wordMatch(a, b) {
+    if (a === b) return true;
+    const [s, l] = a.length < b.length ? [a, b] : [b, a];
+    if (s.length >= 5 && l.startsWith(s)) return true;
+    if (s.length < 6) return false;
+    return [-1, 0, 1].some(k => lev(s, l.slice(0, s.length + k)) <= 2);
+  }
+  // Does a marking row's text mention this store?
+  function mentionsStore(markText, storeName) {
+    const hay = storeWords(markText, 2);
+    let words = storeWords(storeName);
+    if (!words.length) words = storeWords(storeName, 2);   // e.g. "Coop Vä"
+    if (words.some(w => hay.some(h => wordMatch(w, h)))) return true;
+    // Spacing differs: "Spånga Torg" vs "Spångatorg", "Västraskogen" vs "Västra Skogen".
+    const joined = s => storeWords(s, 1).join('');
+    return words.length > 0 && (joined(markText).includes(words.join('')) ||
+      hay.some(h => h.length >= 6 && joined(storeName).includes(h)));
+  }
+
+  // Can a token like "AB", "AnBe" or "ABC" be built from prefixes of the name's parts?
+  function initialsMatch(token, name) {
+    const t = token.toUpperCase();
+    const parts = str(name).toUpperCase().split(/[\s-]+/).filter(Boolean);
+    if (parts.length < 2 || t.length < 2) return false;
+    const go = (ti, pi, used) => {
+      if (ti === t.length) return used >= 2;   // initials of a double first name alone are fine too
+      if (pi >= parts.length) return false;
+      // Skip a middle part (e.g. the second half of a double first name), but never the first.
+      if (pi > 0 && go(ti, pi + 1, used)) return true;
+      const p = parts[pi];
+      for (let k = 1; k <= p.length && ti + k <= t.length; k++) {
+        if (t.slice(ti, ti + k) !== p.slice(0, k)) break;
+        if (go(ti + k, pi + 1, used + 1)) return true;
+      }
+      return false;
+    };
+    return go(0, 0, 0);
+  }
+
+  // Region from a store cell's fill: green = Östra, light cyan = Mitt, yellow = LÅGPRIS, blue = Syd/Väst/CHAB.
+  const REGIONS = ['Östra', 'Mitt', 'Syd/Väst/CHAB', 'LÅGPRIS'];
+  function regionFromStyle(s) {
+    const rgb = s && s.fgColor && s.fgColor.rgb;
+    if (!rgb || s.patternType === 'none') return null;
+    const hex = rgb.slice(-6);
+    const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    if (d < 0.08) return null;   // white/grey: no region
+    let hue = max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+    if (hue < 0) hue += 360;
+    if (hue >= 40 && hue < 80) return 'LÅGPRIS';
+    if (hue >= 80 && hue < 160) return 'Östra';
+    if (hue >= 160 && hue < 195) return 'Mitt';
+    if (hue >= 195 && hue < 260) return 'Syd/Väst/CHAB';
+    return null;
+  }
+
+  function colLetter(i) {
+    let s = ''; i += 1;
+    while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); }
+    return s;
+  }
+
+  // Find columns from the header row. Staff = columns between the leader column and the first "BEHOV"/known column.
+  function parseHeader(hdr) {
+    const H = hdr.map(h => up(h).replace(/\s+/g, ''));
+    const find = pred => H.findIndex(pred);
+    const c = {
+      date: find(h => h === 'DATUM' || h === 'DAT' || h === 'DATE'),
+      nr: find(h => h.startsWith('BUTIKSNR') || h.startsWith('BUTIKNR')),
+      name: find(h => h === 'BUTIKSNAMN' || h === 'BUTIKNAMN'),
+      leader: find(h => h.includes('INVENTERINGSLEDARE') || h === 'INVLED' || h === 'LEDARE'),
+      mark: find(h => h.startsWith('MÄRKNING') || h.startsWith('MARKNING')),
+      mail: find(h => h === 'MEJLAT' || h === 'MAILAT' || h === 'MEJL'),
+      need: find(h => h === 'INVENTERAREBEHOV' || h === 'INVENTERINGSBEHOV'),
+      pwc: find(h => h.startsWith('PWCEXPORTFIL')),   // "…INLAGT G:" and "…INLAGT TEAMS"
+    };
+    if (c.date < 0 || c.leader < 0) return null;
+    const staff = [];
+    for (let i = c.leader + 1; i < H.length; i++) {
+      const h = H[i];
+      if (!h || h.includes('BEHOV') || h.includes('BUDGET') || h.includes('BOKAT') || i === c.mark || i === c.mail) break;
+      if (!/^VAKANT/.test(h)) staff.push({ col: i, name: str(hdr[i]) });
+    }
+    return { ...c, staff };
+  }
+
+  // A cell can hold combined codes: "X/R", "MÄ + X".
+  const splitCode = v => v.toUpperCase().split(/\s*[\/+]\s*/).filter(Boolean);
+
+  // Turns a workbook (SheetJS) into a flat list of rows.
+  function parseWorkbook(wb, XLSX) {
+    const rows = [], skipped = [], sheets = [];
+    for (const sheetName of wb.SheetNames) {
+      const ws = wb.Sheets[sheetName];
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true });
+      const h = aoa.length ? parseHeader(aoa[0] || []) : null;
+      if (!h) { skipped.push(sheetName); continue; }
+      sheets.push({ name: sheetName, staff: h.staff.map(s => s.name) });
+      let lastDate = null;
+      for (let r = 1; r < aoa.length; r++) {
+        const a = aoa[r] || [];
+        const date = cellToISO(a[h.date]) || lastDate;
+        if (cellToISO(a[h.date])) lastDate = date;
+        const nrStr = str(h.nr >= 0 ? a[h.nr] : null);
+        const nameStr = str(h.name >= 0 ? a[h.name] : null);
+        // Store numbers appear both as 16260 and as text "01-6260".
+        const nrIsNumber = /^\d+(\.0+)?$/.test(nrStr) || /^\d{1,3}[\s-]\d{3,5}$/.test(nrStr);
+        const codes = [];
+        for (const s of h.staff) {
+          const v = str(a[s.col]);
+          if (v) codes.push({ staff: s.name, raw: v.toUpperCase(), parts: splitCode(v), cell: colLetter(s.col) + (r + 1) });
+        }
+        const row = {
+          sheet: sheetName, rowNum: r + 1, date,
+          storeNr: nrIsNumber ? (/^\d+(\.0+)?$/.test(nrStr) ? String(parseInt(nrStr, 10)) : nrStr) : '',
+          // Marking rows often put store names in the BUTIKSNR column too.
+          storeName: nameStr || (nrIsNumber ? '' : nrStr),
+          text: [nrIsNumber ? '' : nrStr, nameStr].filter(Boolean).join(' '),
+          nameCell: colLetter(h.name >= 0 ? h.name : h.nr) + (r + 1),
+          leader: str(a[h.leader]),
+          leaderCell: colLetter(h.leader) + (r + 1),
+          mark: h.mark >= 0 ? a[h.mark] : null,
+          markCell: h.mark >= 0 ? colLetter(h.mark) + (r + 1) : null,
+          mail: h.mail >= 0 ? str(a[h.mail]) : '',
+          mailCell: h.mail >= 0 ? colLetter(h.mail) + (r + 1) : null,
+          hasMarkCol: h.mark >= 0, hasMailCol: h.mail >= 0,
+          pwc: h.pwc >= 0 ? str(a[h.pwc]) : null,
+          pwcCell: h.pwc >= 0 ? colLetter(h.pwc) + (r + 1) : null,
+          need: h.need >= 0 && str(a[h.need]) !== '' && !isNaN(Number(a[h.need])) ? Number(a[h.need]) : null,
+          needCell: h.need >= 0 ? colLetter(h.need) + (r + 1) : null,
+          codes, staffList: h.staff.map(s => s.name),
+        };
+        const styleAt = c => (c >= 0 && ws[XLSX.utils.encode_cell({ r, c })] || {}).s || null;
+        row.region = regionFromStyle(styleAt(h.nr)) || regionFromStyle(styleAt(h.name));
+        // Holiday banner: a word spelled one letter per staff column (e.g. J U L A F T O N).
+        if (codes.length >= 4 && codes.every(c => c.raw.length === 1) &&
+            codes.filter(c => !'XTLRB'.includes(c.raw)).length >= 3) {
+          row.holiday = codes.map(c => c.raw).join('');
+          row.codes = [];
+        }
+        row.isStore = !!(row.storeNr && nameStr);
+        row.cancelled = CANCEL_RE.test(row.text);
+        row.isMarking = row.codes.some(c => c.parts.includes('MÄ'));
+        rows.push(row);
+      }
+    }
+    return { rows, skipped, sheets };
+  }
+
+  // Parse "AB 4/6", "AB CD 26/6", "AB&CD 14/10", "AB,CD 15-9", "AB 10/8 Teams" or an Excel date.
+  function parseMark(v, storeISO) {
+    if (typeof v === 'number' && v > 20000) return { iso: serialToISO(v), initials: [] };
+    const s = str(v);
+    const m = s.match(/(\d{1,2})\s*[\/-]\s*(\d{1,2})(?:\s*[-/]\s*(\d{2,4}))?/);
+    const initials = (m ? s.replace(m[0], ' ') : s).split(/[^A-Za-zÅÄÖåäö]+/)
+      .filter(t => t.length >= 2 && t.length <= 4 && !/^teams$/i.test(t));
+    if (!m) return { noDate: true, initials, text: s };
+    const d = +m[1], mo = +m[2];
+    let y;
+    if (m[3]) y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    else {
+      y = +storeISO.slice(0, 4);
+      if (validDate(y, mo, d) && `${y}-${pad(mo)}-${pad(d)}` > storeISO) y -= 1;
+    }
+    if (!validDate(y, mo, d)) return { invalid: true, initials, text: s };
+    return { iso: `${y}-${pad(mo)}-${pad(d)}`, initials };
+  }
+
+  function fmtShort(iso) { const [, m, d] = iso.split('-'); return `${+d}/${+m}`; }
+  // "01-6225" and 16225 are the same store.
+  const nrKey = nr => { const d = String(nr || '').replace(/\D/g, ''); return d ? String(parseInt(d, 10)) : ''; };
+  // "Flyttad till 4/11", "Flyttas till 13/5", "flytad 27/10", "flytt till 10/6", "Flyttad till 2026-12-11"
+  // -> ISO date (for d/m: the year that puts it nearest the original date).
+  function movedTo(text, fromISO) {
+    const m = str(text).match(/flyt+(?:a[ds])?\s*(?:till\s*)?(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})\s*\/\s*(\d{1,2}))/i);
+    if (!m) return null;
+    if (m[1]) {
+      if (!validDate(+m[1], +m[2], +m[3])) return { invalid: true, text: m[0] };
+      return { iso: `${m[1]}-${pad(m[2])}-${pad(m[3])}`, text: m[0] };
+    }
+    const d = +m[4], mo = +m[5], y0 = +fromISO.slice(0, 4);
+    const options = [y0 - 1, y0, y0 + 1].filter(y => validDate(y, mo, d)).map(y => `${y}-${pad(mo)}-${pad(d)}`);
+    if (!options.length) return { invalid: true, text: m[0] };
+    const dist = iso => Math.abs(isoToUTC(iso) - isoToUTC(fromISO));
+    return { iso: options.sort((a, b) => dist(a) - dist(b))[0], text: m[0] };
+  }
+
+  function label(r) { return r.storeNr ? `${r.storeNr} ${r.storeName}` : (r.storeName || '(ingen butik)'); }
+
+  function check(parsed, from, to, validCodes, today) {
+    if (!today) { const d = new Date(); today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+    const VALID = (validCodes && validCodes.length ? validCodes : DEFAULT_CODES).map(c => c.toUpperCase());
+    const { rows } = parsed;
+    const out = [];
+    const add = (sev, cat, date, msg, r, cell, region) => out.push({
+      sev, cat, date, msg, sheet: r ? r.sheet : '', row: r ? r.rowNum : null, cell: cell || null,
+      region: region !== undefined ? region : (r ? r.region : null),
+      store: r ? r.storeName : '',
+    });
+    // For per-person warnings, use the region of the store they are booked on.
+    const regionOf = hits => {
+      const h = hits.find(x => x.r.region && x.r.isStore) || hits.find(x => x.r.region);
+      return h ? h.r.region : null;
+    };
+
+    const byDate = new Map();
+    for (const r of rows) if (r.date) { if (!byDate.has(r.date)) byDate.set(r.date, []); byDate.get(r.date).push(r); }
+
+    const inRange = rows.filter(r => r.date && r.date >= from && r.date <= to);
+
+    for (const r of inRange) {
+      const xs = r.codes.filter(c => c.parts.includes('X'));
+
+      for (const c of r.codes) {
+        const bad = c.parts.filter(p => !VALID.includes(p));
+        if (bad.length) add('warn', 'personal', r.date, `Okänd kod "${c.raw}" för ${c.staff}.`, r, c.cell);
+      }
+
+      if (r.isStore) {
+        if (r.cancelled) {
+          if (xs.length) add('err', 'installd', r.date,
+            `${label(r)} är inställd/flyttad men har X för: ${xs.map(c => c.staff).join(', ')}.`, r, xs.map(c => c.cell).join(', '));
+          checkMoved(r);
+        } else {
+          if (!r.leader) add('err', 'ledare', r.date, `${label(r)} saknar inventeringsledare.`, r, r.leaderCell);
+          // Follow-up: once the inventory day has passed, the PWC export file must be registered.
+          if (r.pwc !== null && !r.pwc && r.date < today) {
+            // Name the inventeringsledare (full name when it can be resolved) so it's clear who to follow up with.
+            const { found } = r.leader ? resolveLeaders(r) : { found: [] };
+            const lead = found.length ? found.join(', ') : r.leader || 'ingen angiven';
+            add('err', 'pwc', r.date, `${label(r)} är inventerad men PWC EXPORTFIL INLAGT är tomt. Inventeringsledare: ${lead}.`, r, r.pwcCell);
+          }
+          if (!xs.length) add('warn', 'ovrigt', r.date, `${label(r)} har ingen personal bokad (inget X).`, r, r.nameCell);
+          else if (r.need !== null && xs.length !== r.need) {
+            const diff = xs.length - r.need;
+            add('warn', 'behov', r.date, `${label(r)}: INVENTERARE BEHOV är ${r.need} men ${xs.length} har X (${Math.abs(diff)} för ${diff < 0 ? 'få' : 'många'}).`,
+              r, r.needCell);
+          }
+          if (/^mini\b/i.test(r.storeName)) {
+            // Mini stores are never mailed or marked.
+            if (r.mail) add('warn', 'mejl', r.date, `${label(r)} är en Mini-butik och ska inte mejlas (MEJLAT: "${r.mail}").`, r, r.mailCell);
+            if (str(r.mark)) add('warn', 'markning', r.date, `${label(r)} är en Mini-butik och ska inte märkas (MÄRKNING: "${str(r.mark)}").`, r, r.markCell);
+          } else {
+            if (r.hasMailCol && !r.mail) add('err', 'mejl', r.date, `${label(r)} är inte mejlad (MEJLAT är tomt).`, r, r.mailCell);
+            checkMark(r);
+          }
+        }
+      } else if (xs.length) {
+        if (!r.text) add('err', 'ovrigt', r.date, `X på rad utan butik för: ${xs.map(c => c.staff).join(', ')}.`, r, xs.map(c => c.cell).join(', '));
+        else if (!r.storeNr && !r.cancelled) add('warn', 'ovrigt', r.date, `"${r.text}" har X men saknar butiksnr.`, r, r.nameCell);
+      }
+      if (r.isMarking && !r.text)
+        add('warn', 'markning', r.date, `MÄ på rad utan butiksnamn – går inte att koppla till en butik.`, r,
+          r.codes.filter(c => c.parts.includes('MÄ')).map(c => c.cell).join(', '));
+    }
+
+    // Follows chains like "Flyttad till 16/10" -> (16/10) "Flyttad till 20/11" -> scheduled 20/11.
+    function checkMoved(r) {
+      let mv = movedTo(r.text, r.date);
+      const key = nrKey(r.storeNr), path = [];
+      const say = (sev, msg) => add(sev, 'flyttad', r.date, `${label(r)}: ${msg}`, r, r.nameCell);
+      if (!mv) {
+        if (!/flyt/i.test(r.text)) return;   // inställd/stängd: no new date expected
+        // "Flyttad till januari" / "till 2027": moved, but no exact date set yet.
+        const vague = r.text.match(/flyt\w*\s*(?:till\s*)?((?:jan|feb|mar|apr|maj|jun|jul|aug|sep|okt|nov|dec)\w*|\d{4})/i);
+        return vague
+          ? say('warn', `flyttad till "${vague[1]}" – inget exakt datum angivet ännu.`)
+          : say('err', `står som flyttad men inget nytt datum anges (skriv t.ex. "Flyttad till 4/11").`);
+      }
+      for (let hop = 0; hop < 6; hop++) {
+        if (mv.invalid) return say('warn', `ogiltigt datum i "${mv.text}".`);
+        path.push(fmtShort(mv.iso));
+        const moved = `flyttad till ${path.join(' → ')}`;
+        if (!byDate.has(mv.iso)) return say('warn', `${moved}, men det datumet finns inte i filen – kan inte kontrolleras.`);
+        // Same store: same store number, or a row with the store's name that has a number or booked staff.
+        const there = byDate.get(mv.iso).filter(x => x !== r && x.text && (x.storeNr || x.codes.some(c => c.parts.includes('X'))) &&
+          ((key && nrKey(x.storeNr) === key) || mentionsStore(x.text, r.storeName)));
+        if (there.some(x => !x.cancelled)) return;
+        const next = there.map(x => movedTo(x.text, x.date)).find(Boolean);
+        if (next && !path.includes(next.iso && fmtShort(next.iso))) { mv = next; continue; }
+        if (there.length) return say('warn', `${moved}, men där står den som inställd/flyttad ("${there[0].text}").`);
+        // Hint: the scheduled date nearest the one written (catches 13/5 vs 12/5, or 10/12 vs 12/10).
+        const near = rows.filter(x => x.isStore && !x.cancelled && x.date &&
+            ((key && nrKey(x.storeNr) === key) || mentionsStore(x.text, r.storeName)))
+          .sort((a, b) => Math.abs(isoToUTC(a.date) - isoToUTC(mv.iso)) - Math.abs(isoToUTC(b.date) - isoToUTC(mv.iso)))[0];
+        return say('err', `${moved}, men butiken är inte schemalagd den dagen.` +
+          (near ? ` Närmast schemalagd: ${fmtShort(near.date)} (${near.sheet}) – stämmer datumet?` : ''));
+      }
+    }
+
+    function checkMark(r) {
+      if (!r.hasMarkCol) return;
+      const raw = r.mark;
+      if (str(raw) === '') { add('err', 'markning', r.date, `${label(r)} saknar märkning (t.ex. "AB 4/6").`, r, r.markCell); return; }
+      const p = parseMark(raw, r.date);
+      if (p.noDate) { add('warn', 'markning', r.date, `${label(r)}: märkningen "${p.text}" saknar datum – använd formatet "AB 4/6".`, r, r.markCell); return; }
+      if (p.invalid) { add('warn', 'markning', r.date, `${label(r)}: ogiltigt datum i märkning "${p.text}".`, r, r.markCell); return; }
+      if (!p.initials.length) add('warn', 'markning', r.date, `${label(r)}: märkningen saknar initialer.`, r, r.markCell);
+      // Teams markings are done remotely, so no MÄ row is booked for them.
+      if (/teams/i.test(str(raw))) return;
+      if (!byDate.has(p.iso)) {
+        add('warn', 'markning', r.date, `${label(r)}: märkningsdatum ${fmtShort(p.iso)} finns inte i filen – kan inte kontrolleras.`, r, r.markCell);
+        return;
+      }
+      const sameDay = byDate.get(p.iso).filter(x => x.isMarking);
+      const matches = sameDay.filter(x => mentionsStore(x.text, r.storeName));
+      if (!matches.length) {
+        const other = sameDay.map(x => x.text || '(utan namn)');
+        const hint = other.length ? ` Märkningar den dagen: ${other.join(' | ')}.` : ' Ingen har MÄ den dagen.';
+        add('err', 'markning', r.date, `${label(r)}: märkning ${fmtShort(p.iso)} men ingen MÄ-rad för butiken den dagen.${hint}`, r, r.markCell);
+        return;
+      }
+      if (p.initials.length) {
+        const people = [...new Set(matches.flatMap(x => x.codes.filter(c => c.parts.includes('MÄ')).map(c => c.staff)))];
+        const unknown = p.initials.filter(t => !people.some(n => initialsMatch(t, n)));
+        if (unknown.length) add('warn', 'markning', r.date,
+          `${label(r)}: ${unknown.map(t => `"${t}"`).join(', ')} har inte MÄ på butiken den ${fmtShort(p.iso)} (MÄ: ${people.join(', ') || 'ingen'}).`, r, r.markCell);
+      }
+    }
+
+    // Per staff per day: exactly one filled cell.
+    const dates = [...byDate.keys()].filter(d => d >= from && d <= to).sort();
+    for (const d of dates) {
+      const dayRows = byDate.get(d);
+      const holiday = dayRows.find(r => r.holiday);
+      const staffSet = new Set(dayRows.flatMap(r => r.staffList));
+      const missing = [];
+      for (const s of staffSet) {
+        const hits = dayRows.flatMap(r => r.codes.filter(c => c.staff === s).map(c => ({ ...c, r })));
+        const parts = hits.flatMap(h => h.parts);
+        const away = [...new Set(parts.filter(p => ABSENCE[p]))];
+        const booked = hits.filter(h => h.parts.some(p => !ABSENCE[p]));
+        if (!hits.length) missing.push(s);
+        else if (away.length && booked.length) {
+          add('err', 'franvaro', d,
+            `${s} är ${away.map(p => `${p} (${ABSENCE[p]})`).join(' + ')} men bokad på: ${booked.map(h => `${h.raw} (${h.r.text || 'rad ' + h.r.rowNum})`).join(', ')}.`,
+            booked[0].r, hits.map(h => h.cell).join(', '), regionOf(hits));
+        } else if (hits.length > 1) {
+          // Working at one store and marking another the same day is allowed, but worth a look.
+          const xPlusMa = hits.length === 2 && hits.some(h => h.parts.includes('X')) && hits.some(h => h.parts.includes('MÄ'));
+          add(xPlusMa ? 'warn' : 'err', 'dubbel', d, `${s} är dubbelbokad: ${hits.map(h => `${h.raw} (${h.r.text || 'rad ' + h.r.rowNum})`).join(' + ')}.`,
+            hits[0].r, hits.map(h => h.cell).join(', '), regionOf(hits));
+        }
+      }
+      if (missing.length && !holiday) add('warn', 'personal', d,
+        `${missing.length} ${missing.length === 1 ? 'person saknar' : 'personer saknar'} markering: ${missing.join(', ')}.`,
+        dayRows[0], null, null);
+    }
+
+    return out;
+  }
+
+  // Nicknames used in the INV LED column -> first name.
+  const NICKNAMES = { 'pålle': 'paul', 'corre': 'corinne', 'chrille': 'christer' };
+  const nameKey = s => str(s).toLowerCase().replace(/[\s-]+/g, '');
+  const firstKey = name => nameKey(str(name).split(/\s+/)[0]);
+
+  // Header spellings differ between sheets (typos, double spaces):
+  // map each spelling to the one used on the most sheets when they are almost the same.
+  function canonicalNames(sheets) {
+    const seen = {};
+    for (const s of sheets) for (const n of s.staff) { const k = n.replace(/\s+/g, ' ').trim(); seen[k] = (seen[k] || 0) + 1; }
+    const names = Object.keys(seen).sort((a, b) => seen[b] - seen[a]);
+    const canon = {};
+    for (const n of names) {
+      const main = names.find(m => seen[m] >= seen[n] && m[0] === n[0] && lev(m.toLowerCase(), n.toLowerCase()) <= 2 && canon[m] === m);
+      canon[n] = main || n;
+    }
+    return n => canon[n.replace(/\s+/g, ' ').trim()] || n;
+  }
+
+  // A first name shared by two staff -> the one with X on that store. "Name1/Name2" -> both.
+  function resolveLeaders(row) {
+    const found = [], unknown = [];
+    for (const raw of row.leader.split(/\s*(?:[\/,&+]|\boch\b)\s*/i).map(str).filter(Boolean)) {
+      const t = NICKNAMES[nameKey(raw)] || nameKey(raw);
+      const staff = [...new Set(row.staffList)];   // a sheet can have the same column twice
+      let cands = staff.filter(n => firstKey(n) === t);
+      if (!cands.length && t.length >= 3) cands = staff.filter(n => firstKey(n).startsWith(t) || nameKey(n).startsWith(t));
+      if (!cands.length && t.length >= 4) cands = staff.filter(n => lev(firstKey(n), t) <= 1);   // one-letter typo in the header
+      if (!cands.length && /^[A-ZÅÄÖ][A-Za-zÅÄÖåäö]{1,3}$/.test(raw)) cands = staff.filter(n => initialsMatch(raw, n));
+      if (cands.length > 1) {
+        const withX = cands.filter(n => row.codes.some(c => c.staff === n && c.parts.includes('X')));
+        if (withX.length) cands = withX;
+      }
+      if (cands.length === 1) found.push(cands[0]); else unknown.push(cands.length ? `${raw} (${cands.join(' eller ')}?)` : raw);
+    }
+    return { found, unknown };
+  }
+
+  // Office/meeting and absence columns in the staff table: column key -> codes counted (once per day).
+  const DAY_GROUPS = {
+    ko: ['KO'], mo: ['MÖ'], al: ['AL'],
+    se: ['SE', 'SEM'], sj: ['SJ'], vab: ['VAB'], tj: ['TJ', 'TL', 'TJL'], fl: ['FL'], l: ['L'],
+  };
+  // The office is closed in July, so vacation (SE/SEM) then is not counted as absence.
+  const counts = (g, parts, date) => DAY_GROUPS[g].some(c => parts.has(c)) && !(g === 'se' && date.slice(5, 7) === '07');
+
+  // Per person in the period: store days with X, times as inventeringsledare, MÄ days,
+  // plus days with office/meeting and absence codes.
+  function staffStats(parsed, from, to) {
+    const canon = canonicalNames(parsed.sheets);
+    const stats = new Map(), unknown = {}, dayParts = new Map();
+    const get = n => {
+      const k = canon(n);
+      if (!stats.has(k)) stats.set(k, { name: k, x: 0, lead: 0, ma: 0, ...Object.fromEntries(Object.keys(DAY_GROUPS).map(g => [g, 0])) });
+      return stats.get(k);
+    };
+    for (const r of parsed.rows) {
+      if (!r.date || r.date < from || r.date > to) continue;
+      r.staffList.forEach(get);
+      for (const c of r.codes) {
+        if (c.parts.includes('X') && r.storeName) get(c.staff).x++;
+        if (c.parts.includes('MÄ')) get(c.staff).ma++;
+        const key = `${canon(c.staff)}|${r.date}`;
+        if (!dayParts.has(key)) dayParts.set(key, new Set());
+        c.parts.forEach(p => dayParts.get(key).add(p));
+      }
+      if (r.isStore && !r.cancelled && r.leader) {
+        const { found, unknown: u } = resolveLeaders(r);
+        found.forEach(n => get(n).lead++);
+        u.forEach(n => unknown[n] = (unknown[n] || 0) + 1);
+      }
+    }
+    for (const [key, parts] of dayParts) {
+      const [name, date] = key.split('|');
+      const s = get(name);
+      for (const g of Object.keys(DAY_GROUPS)) if (counts(g, parts, date)) s[g]++;
+    }
+    return { staff: [...stats.values()], unknown };
+  }
+
+  // Absence days per person and month for a whole year: { name: { group: [12 month counts] } }.
+  const ABSENCE_GROUPS = ['se', 'sj', 'vab', 'tj', 'fl', 'l'];
+  function absenceByMonth(parsed, year) {
+    const canon = canonicalNames(parsed.sheets);
+    const dayParts = new Map(), out = {};
+    for (const r of parsed.rows) {
+      if (!r.date || !r.date.startsWith(year + '-')) continue;
+      for (const n of r.staffList) out[canon(n)] = out[canon(n)] || null;
+      for (const c of r.codes) {
+        const key = `${canon(c.staff)}|${r.date}`;
+        if (!dayParts.has(key)) dayParts.set(key, new Set());
+        c.parts.forEach(p => dayParts.get(key).add(p));
+      }
+    }
+    for (const n of Object.keys(out)) out[n] = Object.fromEntries(ABSENCE_GROUPS.map(g => [g, Array(12).fill(0)]));
+    for (const [key, parts] of dayParts) {
+      const [name, date] = key.split('|');
+      const m = +date.slice(5, 7) - 1;
+      for (const g of ABSENCE_GROUPS) if (counts(g, parts, date)) out[name][g][m]++;
+    }
+    return out;
+  }
+  const yearsIn = parsed => [...new Set(parsed.rows.map(r => r.date && r.date.slice(0, 4)).filter(Boolean))].sort();
+
+  function holidays(parsed, from, to) {
+    const seen = new Map();
+    for (const r of parsed.rows) if (r.holiday && r.date >= from && r.date <= to && !seen.has(r.date)) seen.set(r.date, r.holiday);
+    return [...seen].sort().map(([date, name]) => ({ date, name }));
+  }
+
+  return { DEFAULT_CODES, REGIONS, holidays, staffStats, absenceByMonth, yearsIn, parseWorkbook, check, isoWeek, mondayOf, addDays, cellToISO, parseMark, initialsMatch, mentionsStore };
+})();
+if (typeof module !== 'undefined') module.exports = Checker;
+</script>
+
+<script>
+// ---- UI ----
+(() => {
+  const $ = id => document.getElementById(id);
+
+  // Draft e-mail in Outlook on the web (new tab) for a missing PWC export file.
+  const pwcMailLink = it => {
+    const store = it.store || '';
+    const subject = `Saknar PWC fil för ${store}`;
+    const body = `Hej! Vill du säkerställa att exportfilen är uppladdad i PWC mappen och gröna den i schemat för ${store}. Tack på förhand!`;
+    const url = `https://outlook.live.com/mail/0/deeplink/compose?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    return `<a class="btn small" href="${esc(url)}" target="_blank" rel="noopener">Mejla</a>`;
+  };
+
+  // Light/dark toggle, remembered in this browser.
+  const isLight = () => document.documentElement.dataset.theme === 'light';
+  const themeLabel = () => $('themeBtn').textContent = isLight() ? '🌙 Mörkt läge' : '☀️ Ljust läge';
+  $('themeBtn').addEventListener('click', () => {
+    if (isLight()) delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = 'light';
+    try { localStorage.setItem('schemakontroll.theme', isLight() ? 'light' : 'dark'); } catch {}
+    themeLabel();
+  });
+  themeLabel();
+  const CATS = {
+    ledare: 'Inventeringsledare', personal: 'Personal saknas / okänd kod', dubbel: 'Dubbelbokning', flyttad: 'Flyttad butik', behov: 'Inventerarbehov', franvaro: 'Bokad vid frånvaro',
+    markning: 'Märkning', mejl: 'Mejlat', pwc: 'PWC exportfil', installd: 'Inställd med X', ovrigt: 'Övrigt',
+  };
+  const MONTHS = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+  const DAYS = ['söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag'];
+  const pad = n => String(n).padStart(2, '0');
+  const todayISO = (() => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; })();
+  const fmt = iso => { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
+  const dayName = iso => { const [y, m, d] = iso.split('-').map(Number); return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]; };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  let mode = 'weeks', parsed = null, results = [], activeCat = null;
+  const activeRegions = new Set();   // empty = all regions
+  const regionShown = r => !activeRegions.size || activeRegions.has(regionOf(r));
+  const NO_REGION = 'Utan region';
+  const SWATCH = { 'Östra': '#99FF66', 'Mitt': '#CCFFFF', 'Syd/Väst/CHAB': '#99CCFF', 'LÅGPRIS': '#FFFF99', [NO_REGION]: 'transparent' };
+  const regionOf = r => r.region || NO_REGION;
+
+  // Approved warnings: keyed on everything that describes them, so a change in the schedule brings them back.
+  const APPROVED_KEY = 'schemakontroll.approved';
+  let approved = {};
+  try { approved = JSON.parse(localStorage.getItem(APPROVED_KEY) || '{}') || {}; } catch {}
+  let showApproved = true;   // approved warnings stay visible (faded) unless hidden
+  const keyOf = r => [r.sheet, r.cell || '', r.date, r.cat, r.msg].join('|');
+  const isApproved = r => !!approved[keyOf(r)];
+  function setApproved(r, on) {
+    if (on) approved[keyOf(r)] = new Date().toISOString().slice(0, 10); else delete approved[keyOf(r)];
+    try { localStorage.setItem(APPROVED_KEY, JSON.stringify(approved)); } catch {}
+    renderList();
+  }
+
+  for (let i = 1; i <= 12; i++) $('wCount').add(new Option(`${i} ${i === 1 ? 'vecka' : 'veckor'}`, i, i === 6, i === 6));
+  $('wStart').value = Checker.mondayOf(todayISO);
+  $('mMonth').value = todayISO.slice(0, 7);
+  $('rFrom').value = todayISO;
+  $('rTo').value = Checker.addDays(todayISO, 41);
+
+  function getRange() {
+    if (mode === 'weeks') {
+      const start = Checker.mondayOf($('wStart').value || todayISO);
+      return { from: start, to: Checker.addDays(start, 7 * +$('wCount').value - 1) };
+    }
+    if (mode === 'month') {
+      const [y, m] = ($('mMonth').value || todayISO.slice(0, 7)).split('-').map(Number);
+      const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${pad(last)}` };
+    }
+    let from = $('rFrom').value || todayISO, to = $('rTo').value || from;
+    if (to < from) [from, to] = [to, from];
+    return { from, to };
+  }
+
+  function renderRange() {
+    const { from, to } = getRange();
+    const w1 = Checker.isoWeek(from), w2 = Checker.isoWeek(to);
+    $('rangeInfo').innerHTML = `Kontrollerar <b>${fmt(from)} – ${fmt(to)}</b> (v.${w1.week}${w1.week !== w2.week || w1.year !== w2.year ? ` – v.${w2.week}` : ''}).`;
+  }
+
+  document.querySelectorAll('#modeTabs button').forEach(b => b.addEventListener('click', () => {
+    mode = b.dataset.mode;
+    document.querySelectorAll('#modeTabs button').forEach(x => x.classList.toggle('active', x === b));
+    document.querySelectorAll('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== mode);
+    update();
+  }));
+  ['wStart', 'wCount', 'mMonth', 'rFrom', 'rTo'].forEach(id => $(id).addEventListener('change', update));
+
+  // File handling
+  // Chrome/Edge can keep a handle to the file, so "Kontrollera igen" re-reads it after it is saved in Excel.
+  let fileHandle = null;
+  const canPick = 'showOpenFilePicker' in window;
+  const drop = $('drop');
+  drop.addEventListener('click', async () => {
+    if (!canPick) return $('file').click();
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'Excel', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'] } }],
+      });
+      fileHandle = handle;
+      load(await handle.getFile());
+    } catch (err) {
+      if (err.name !== 'AbortError') $('file').click();
+    }
+  });
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', async e => {
+    e.preventDefault(); drop.classList.remove('over');
+    const item = e.dataTransfer.items && e.dataTransfer.items[0];
+    const file = e.dataTransfer.files[0];
+    fileHandle = null;
+    if (item && item.getAsFileSystemHandle) {
+      try { const hd = await item.getAsFileSystemHandle(); if (hd && hd.kind === 'file') fileHandle = hd; } catch {}
+    }
+    if (file) load(file);
+  });
+  $('file').addEventListener('change', e => { fileHandle = null; if (e.target.files[0]) load(e.target.files[0]); e.target.value = ''; });
+
+  $('recheckBtn').addEventListener('click', async () => {
+    if (!fileHandle) return drop.click();
+    try {
+      if (fileHandle.queryPermission && await fileHandle.queryPermission({ mode: 'read' }) !== 'granted') {
+        if (await fileHandle.requestPermission({ mode: 'read' }) !== 'granted') return;
+      }
+      load(await fileHandle.getFile(), true);
+    } catch (err) {
+      $('recheckInfo').innerHTML = `<span style="color:var(--err)">Kunde inte läsa filen igen (${esc(err.message)}). Spara filen i Excel och försök igen, eller välj den på nytt.</span>`;
+    }
+  });
+
+  async function load(file, keepFilters) {
+    $('fileinfo').textContent = 'Läser filen…';
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', cellDates: false, cellStyles: true });
+      parsed = Checker.parseWorkbook(wb, XLSX);
+      const dates = parsed.rows.map(r => r.date).filter(Boolean).sort();
+      parsed.minDate = dates[0]; parsed.maxDate = dates[dates.length - 1];
+      const staffCount = Math.max(0, ...parsed.sheets.map(s => s.staff.length));
+      $('fileinfo').innerHTML = `<b>${esc(file.name)}</b> – ${parsed.sheets.length} blad, ${staffCount} personal` +
+        (dates.length ? `, ${fmt(parsed.minDate)} – ${fmt(parsed.maxDate)}` : '') +
+        (parsed.skipped.length ? `<br><span class="cat">Hoppade över blad utan schemarubriker: ${esc(parsed.skipped.join(', '))}</span>` : '');
+    } catch (err) {
+      parsed = null;
+      $('fileinfo').innerHTML = `<span style="color:var(--err)">Kunde inte läsa filen: ${esc(err.message)}</span>`;
+    }
+    const time = new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    $('recheckBtn').hidden = !parsed;
+    $('recheckBtn').textContent = fileHandle ? 'Kontrollera igen' : 'Välj filen igen';
+    $('recheckInfo').textContent = parsed ? `Kontrollerad ${time}` +
+      (fileHandle ? ' – spara i Excel och klicka "Kontrollera igen" för att se ändringarna.' :
+        canPick ? ' – klicka på rutan ovan (i stället för att dra in filen) så kan filen läsas om med ett klick.' : '') : '';
+    update(keepFilters);
+  }
+
+  function update(keepFilters) {
+    renderRange();
+    if (!parsed) return;
+    const { from, to } = getRange();
+    results = Checker.check(parsed, from, to);
+    if (keepFilters !== true) { activeCat = null; activeRegions.clear(); }
+    $('results').hidden = false;
+    const inRange = parsed.rows.some(r => r.date && r.date >= from && r.date <= to);
+    const hol = Checker.holidays(parsed, from, to);
+    const holHtml = hol.length ? `<div class="notice ok">Helgdagar i perioden (personalkontrollen hoppas över): ${hol.map(h => `${esc(h.name.charAt(0) + h.name.slice(1).toLowerCase())} ${fmt(h.date)}`).join(', ')}.</div>` : '';
+    $('resultNotice').innerHTML = holHtml + (!inRange
+      ? `<div class="notice warn">Schemat har inga dagar i vald period. Filen täcker ${parsed.minDate ? fmt(parsed.minDate) + ' – ' + fmt(parsed.maxDate) : 'inga datum'}.</div>`
+      : !results.length ? `<div class="notice ok">Inga avvikelser hittades i vald period.</div>` : '');
+    renderList();
+    stats = Checker.staffStats(parsed, from, to);
+    // Years in the file; keep the chosen year, otherwise use the year the period starts in.
+    const years = Checker.yearsIn(parsed), prevYear = $('absYear').value;
+    $('absYear').innerHTML = years.map(y => `<option>${y}</option>`).join('');
+    $('absYear').value = years.includes(prevYear) ? prevYear : years.includes(from.slice(0, 4)) ? from.slice(0, 4) : years[years.length - 1] || '';
+    renderStats();
+  }
+
+  // ---- Staff statistics ----
+  // Two views: "work" (Arbete + Kontor & möten) and "absence" (Frånvaro), each with its own sort order.
+  let stats = null, statView = 'work';
+  const statSorts = { work: { key: 'lead', dir: -1 }, absence: { key: 'abs', dir: -1 } };
+  const ABSENCE_KEYS = ['se', 'sj', 'vab', 'tj', 'fl', 'l'];
+  // group: header above the columns; lowMark: also highlight values far below average (work columns only).
+  const STAT_COLS = [
+    { key: 'name', label: 'Namn', group: '' },
+    { key: 'x', label: 'X', title: 'Butiksdagar med X', group: 'Arbete', view: 'work', bar: true, lowMark: true },
+    { key: 'lead', label: 'Ledare', title: 'Gånger som inventeringsledare', group: 'Arbete', view: 'work', bar: true, lowMark: true },
+    { key: 'share', label: 'Ledare / X', group: 'Arbete', view: 'work', pct: true, lowMark: true },
+    { key: 'ma', label: 'MÄ', title: 'Märkningsdagar', group: 'Arbete', view: 'work', lowMark: true },
+    { key: 'ko', label: 'KO', title: 'Kontorsdagar', group: 'Kontor & möten', view: 'work' },
+    { key: 'mo', label: 'MÖ', title: 'Mötesdagar', group: 'Kontor & möten', view: 'work' },
+    { key: 'al', label: 'AL', group: 'Kontor & möten', view: 'work' },
+    { key: 'abs', label: 'Totalt', title: 'Alla frånvarodagar', group: '', view: 'absence', bar: true },
+    { key: 'se', label: 'SE', title: 'Semester (SE/SEM)', group: 'Frånvaro (dagar)', view: 'absence' },
+    { key: 'sj', label: 'SJ', title: 'Sjuk', group: 'Frånvaro (dagar)', view: 'absence' },
+    { key: 'vab', label: 'VAB', title: 'Vård av sjukt barn', group: 'Frånvaro (dagar)', view: 'absence' },
+    { key: 'tj', label: 'TJL', title: 'Tjänstledig (TJ/TL/TJL)', group: 'Frånvaro (dagar)', view: 'absence' },
+    { key: 'fl', label: 'FL', title: 'Föräldraledig', group: 'Frånvaro (dagar)', view: 'absence' },
+    { key: 'l', label: 'L', title: 'Ledig', group: 'Frånvaro (dagar)', view: 'absence' },
+  ];
+  // Absence tab: "Helår per månad" (default) or the chosen period.
+  statSorts.absYear = { key: 'total', dir: -1 };
+  const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'Maj', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dec'];
+  const yearMode = () => statView === 'absence' && $('absMode').value === 'year';
+  const sortSlot = () => yearMode() ? 'absYear' : statView;
+
+  function renderAbsYear() {
+    const year = $('absYear').value, type = $('absType').value;
+    const data = Checker.absenceByMonth(parsed, year);
+    const groups = type === 'all' ? ['se', 'sj', 'vab', 'tj', 'fl', 'l'] : [type];
+    let rows = Object.entries(data).map(([name, g]) => {
+      const m = Array.from({ length: 12 }, (_, i) => groups.reduce((a, k) => a + g[k][i], 0));
+      return { name, total: m.reduce((a, b) => a + b, 0), ...Object.fromEntries(m.map((v, i) => [`m${i + 1}`, v])) };
+    });
+    if ($('hideZero').checked) rows = rows.filter(r => r.total);
+    const { key, dir } = statSorts.absYear;
+    rows.sort((a, b) => (key === 'name' ? a.name.localeCompare(b.name, 'sv') : a[key] - b[key]) * dir || a.name.localeCompare(b.name, 'sv'));
+    const maxCell = Math.max(1, ...rows.flatMap(r => MONTH_LABELS.map((_, i) => r[`m${i + 1}`])));
+    const avgTotal = rows.length ? rows.reduce((a, r) => a + r.total, 0) / rows.length : 0;
+    const cols = [{ key: 'name', label: 'Namn' }, ...MONTH_LABELS.map((l, i) => ({ key: `m${i + 1}`, label: i === 6 && (type === 'all' || type === 'se') ? `${l}*` : l })), { key: 'total', label: 'Totalt' }];
+    let html = '<thead><tr>' + cols.map(c =>
+      `<th data-key="${c.key}" class="${c.key === key ? 'sorted' : ''}">${c.label}${c.key === key ? (dir < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('') + '</tr></thead><tbody>';
+    // Month cells are shaded by size so heavy months stand out.
+    const heat = v => v ? ` class="heat" style="background: rgba(126,162,255,${(0.1 + 0.55 * v / maxCell).toFixed(2)})"` : ' class="zero"';
+    for (const r of rows) {
+      html += `<tr><td>${esc(r.name)}</td>${MONTH_LABELS.map((_, i) => `<td${heat(r[`m${i + 1}`])}>${r[`m${i + 1}`]}</td>`).join('')}` +
+        `<td class="${avgTotal > 0 && r.total >= avgTotal * 1.3 ? 'hi' : ''}">${r.total}</td></tr>`;
+    }
+    const monthSum = i => rows.reduce((a, r) => a + r[`m${i + 1}`], 0);
+    html += `<tr class="avg"><td>Summa (${rows.length} personer)</td>${MONTH_LABELS.map((_, i) => `<td>${monthSum(i)}</td>`).join('')}<td>${rows.reduce((a, r) => a + r.total, 0)}</td></tr></tbody>`;
+    $('statsTable').innerHTML = html;
+    $('statsUnknown').textContent = '';
+  }
+
+  function renderStats() {
+    if (!stats) return;
+    const isAbs = statView === 'absence';
+    $('absControls').hidden = !isAbs;
+    document.querySelectorAll('#absControls [data-year]').forEach(el => el.hidden = !yearMode());
+    const julyNote = isAbs ? ' SE/SEM i juli räknas inte (kontoret är stängt).' : '';
+    $('periodHint').textContent = (yearMode() ? `Hela ${$('absYear').value} oavsett vald period – dagar per månad.` : 'För vald period.') + julyNote;
+    if (yearMode()) { $('loHint').hidden = true; return renderAbsYear(); }
+    const cols = STAT_COLS.filter(c => c.key === 'name' || c.view === statView);
+    const NUM_COLS = cols.filter(c => c.key !== 'name');
+    $('loHint').hidden = statView !== 'work';
+    const rows = stats.staff.map(s => ({ ...s, share: s.x ? s.lead / s.x : 0, abs: ABSENCE_KEYS.reduce((a, k) => a + s[k], 0) }))
+      .filter(s => !$('hideZero').checked || NUM_COLS.some(c => c.key !== 'share' && s[c.key]));
+    const avg = k => rows.length ? rows.reduce((a, s) => a + s[k], 0) / rows.length : 0;
+    const av = Object.fromEntries(NUM_COLS.map(c => [c.key, avg(c.key)]));
+    const max = Object.fromEntries(NUM_COLS.map(c => [c.key, Math.max(1, ...rows.map(s => s[c.key]))]));
+    const { key, dir } = statSorts[statView];
+    rows.sort((a, b) => (key === 'name' ? a.name.localeCompare(b.name, 'sv') : a[key] - b[key]) * dir || a.name.localeCompare(b.name, 'sv'));
+    // Highlight values far from the average among people who work in the period.
+    const mark = (c, v) => av[c.key] > 0 && v >= av[c.key] * 1.3 && v > 0 ? 'hi' : c.lowMark && av[c.key] > 0 && v <= av[c.key] * 0.7 ? 'lo' : '';
+    const pct = v => `${Math.round(v * 100)} %`;
+    const groups = [];
+    for (const c of cols) { const g = groups[groups.length - 1]; if (g && g.name === c.group) g.span++; else groups.push({ name: c.group, span: 1 }); }
+    let html = '<thead><tr class="grp">' + groups.map(g => `<th colspan="${g.span}">${esc(g.name)}</th>`).join('') + '</tr><tr>' + cols.map(c =>
+      `<th data-key="${c.key}" class="${c.key === key ? 'sorted' : ''}"${c.title ? ` title="${esc(c.title)}"` : ''}>${c.label}${c.key === key ? (dir < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('') + '</tr></thead><tbody>';
+    const cell = (c, s) => {
+      if (c.pct) return `<td class="${s.x ? mark(c, s[c.key]) : ''}">${s.x ? pct(s[c.key]) : '–'}</td>`;
+      const v = s[c.key];
+      return `<td class="${mark(c, v)}${v ? '' : ' zero'}">${v}${c.bar ? `<span class="bar" style="width:${Math.round(50 * v / max[c.key])}px"></span>` : ''}</td>`;
+    };
+    for (const s of rows) html += `<tr><td>${esc(s.name)}</td>${NUM_COLS.map(c => cell(c, s)).join('')}</tr>`;
+    html += `<tr class="avg"><td>Snitt (${rows.length} personer)</td>${NUM_COLS.map(c => `<td>${c.pct ? pct(av[c.key]) : av[c.key].toFixed(1)}</td>`).join('')}</tr></tbody>`;
+    $('statsTable').innerHTML = html;
+    const unk = Object.entries(stats.unknown).sort((a, b) => b[1] - a[1]);
+    $('statsUnknown').textContent = unk.length
+      ? `Ledarnamn som inte kunde kopplas till en person (räknas inte): ${unk.map(([n, c]) => `${n} ×${c}`).join(', ')}.` : '';
+  }
+  $('statsTable').addEventListener('click', e => {
+    const th = e.target.closest('th[data-key]');
+    if (!th) return;
+    const slot = sortSlot(), cur = statSorts[slot];
+    statSorts[slot] = th.dataset.key === cur.key ? { key: cur.key, dir: -cur.dir } : { key: th.dataset.key, dir: th.dataset.key === 'name' ? 1 : -1 };
+    renderStats();
+  });
+  $('hideZero').addEventListener('change', renderStats);
+  ['absMode', 'absYear', 'absType'].forEach(id => $(id).addEventListener('change', renderStats));
+  document.querySelectorAll('#statTabs button').forEach(b => b.addEventListener('click', () => {
+    statView = b.dataset.view;
+    document.querySelectorAll('#statTabs button').forEach(x => x.classList.toggle('active', x === b));
+    renderStats();
+  }));
+
+  // Result tabs: Varningar / Personalstatistik
+  document.querySelectorAll('#resTabs button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('#resTabs button').forEach(x => {
+      x.classList.toggle('active', x === b);
+      $(x.dataset.pane).hidden = x !== b;
+    });
+  }));
+
+  function renderList() {
+    // Category chips count within the chosen region, region chips within the chosen category.
+    const pending = results.filter(r => !isApproved(r));
+    const inRegion = pending.filter(regionShown);
+    const inCat = pending.filter(r => !activeCat || r.cat === activeCat);
+    const counts = {}, rcounts = {};
+    inRegion.forEach(r => counts[r.cat] = (counts[r.cat] || 0) + 1);
+    inCat.forEach(r => rcounts[regionOf(r)] = (rcounts[regionOf(r)] || 0) + 1);
+    const regionNames = [...Checker.REGIONS, NO_REGION];
+    $('regions').innerHTML = results.length ? [`<button class="chip ${activeRegions.size ? '' : 'active'}" data-region="">Alla regioner<span class="n">${inCat.length}</span></button>`]
+      .concat(regionNames.filter(g => rcounts[g]).map(g =>
+        `<button class="chip ${activeRegions.has(g) ? 'active' : ''}" aria-pressed="${activeRegions.has(g)}" data-region="${esc(g)}"><span class="swatch" style="background:${SWATCH[g]}"></span>${esc(g)}<span class="n">${rcounts[g]}</span></button>`)).join('') : '';
+    $('regions').querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
+      // Region chips toggle, so several regions can be shown at once; "Alla regioner" clears the selection.
+      const g = b.dataset.region;
+      if (!g) activeRegions.clear();
+      else if (activeRegions.has(g)) activeRegions.delete(g);
+      else activeRegions.add(g);
+      renderList();
+    }));
+    $('summary').innerHTML = results.length ? [`<button class="chip ${activeCat ? '' : 'active'}" data-cat="">Alla kontroller<span class="n">${inRegion.length}</span></button>`]
+      .concat(Object.keys(CATS).filter(c => counts[c]).map(c =>
+        `<button class="chip ${activeCat === c ? 'active' : ''}" data-cat="${c}">${CATS[c]}<span class="n">${counts[c]}</span></button>`)).join('') : '';
+    $('summary').querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => { activeCat = b.dataset.cat || null; renderList(); }));
+
+    const filtered = visible(true);
+    const nApproved = filtered.filter(isApproved).length;
+    const shown = showApproved ? filtered : filtered.filter(r => !isApproved(r));
+    const open = shown.filter(r => !isApproved(r));
+    const errs = open.filter(r => r.sev === 'err').length;
+    $('countLine').textContent = results.length ? `${errs} fel, ${open.length - errs} varningar` + (nApproved ? `, ${nApproved} godkända` : '') : '';
+    $('showApproved').hidden = !nApproved;
+    const pendingCount = results.filter(r => !isApproved(r)).length;
+    $('warnCount').textContent = pendingCount ? `(${pendingCount})` : '';
+    $('showApproved').textContent = showApproved ? 'Dölj godkända' : `Visa godkända (${nApproved})`;
+
+    if ($('groupBy').value === 'region') {
+      let html = '';
+      for (const g of regionNames) {
+        const items = shown.filter(r => regionOf(r) === g);
+        if (items.length) html += `<div class="region"><h3 class="rhead"><span class="swatch" style="background:${SWATCH[g]}"></span>${esc(g)} (${items.length})</h3>${weeksHtml(items)}</div>`;
+      }
+      $('list').innerHTML = html;
+    } else $('list').innerHTML = weeksHtml(shown);
+  }
+
+  function weeksHtml(shown) {
+    const weeks = new Map();
+    for (const r of shown) {
+      const w = Checker.isoWeek(r.date);
+      const wk = `${w.year}-${pad(w.week)}`;
+      if (!weeks.has(wk)) weeks.set(wk, { w, days: new Map() });
+      const days = weeks.get(wk).days;
+      if (!days.has(r.date)) days.set(r.date, []);
+      days.get(r.date).push(r);
+    }
+    let html = '';
+    for (const [, { w, days }] of [...weeks].sort()) {
+      html += `<div class="week"><h3>Vecka ${w.week} ${w.year}</h3>`;
+      for (const [d, items] of [...days].sort()) {
+        html += `<div class="day"><h4>${dayName(d)} ${fmt(d)}</h4>`;
+        items.sort((a, b) => (a.sev === b.sev ? 0 : a.sev === 'err' ? -1 : 1) || (a.row || 0) - (b.row || 0));
+        for (const it of items) {
+          const ok = isApproved(it);
+          html += `<div class="item${ok ? ' approved' : ''}"><span class="badge ${ok ? 'ok' : it.sev}">${ok ? 'GODKÄND' : it.sev === 'err' ? 'FEL' : 'VARNING'}</span>
+            <div class="msg">${esc(it.msg)}</div>
+            <div class="loc"><span class="swatch" style="background:${SWATCH[regionOf(it)]}"></span>${esc(regionOf(it))} · ${esc(CATS[it.cat])} · Blad "${esc(it.sheet)}"${it.cell ? `, rad ${it.row}, cell ${esc(it.cell)}` : ''}</div>
+            <div class="acts">${it.cat === 'pwc' ? pwcMailLink(it) : ''}<button class="btn small" data-approve="${results.indexOf(it)}" data-on="${ok ? 0 : 1}">${ok ? 'Ångra godkännande' : 'Godkänn'}</button></div></div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+    return html;
+  }
+
+  // includeApproved: approved warnings are hidden from the list and the copied text unless asked for.
+  const visible = includeApproved => results.filter(r => (!activeCat || r.cat === activeCat) && regionShown(r) && (includeApproved || !isApproved(r)));
+  $('list').addEventListener('click', e => {
+    const b = e.target.closest('[data-approve]');
+    if (b) setApproved(results[+b.dataset.approve], b.dataset.on === '1');
+  });
+  $('showApproved').addEventListener('click', () => { showApproved = !showApproved; renderList(); });
+  $('groupBy').addEventListener('change', renderList);
+
+  renderRange();
+})();
+</script>
+</body>
+</html>
