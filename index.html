@@ -787,7 +787,7 @@ if (typeof module !== 'undefined') module.exports = Checker;
     const store = it.store || '';
     const subject = `Saknar PWC fil för ${store}`;
     const body = `Hej! Vill du säkerställa att exportfilen är uppladdad i PWC mappen och gröna den i schemat för ${store}. Tack på förhand!`;
-    const url = `https://outlook.live.com/mail/0/deeplink/compose?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const url = `https://outlook.office.com/mail/deeplink/compose?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     return `<a class="btn small" href="${esc(url)}" target="_blank" rel="noopener">Mejla</a>`;
   };
 
